@@ -1,12 +1,12 @@
 use anyhow::Error;
 use fastembed::{
-    EmbeddingModel, InitOptionsUserDefined, ModelTrait, QuantizationMode, TextEmbedding, 
-    TokenizerFiles, UserDefinedEmbeddingModel
+    EmbeddingModel, InitOptionsUserDefined, ModelTrait, QuantizationMode, TextEmbedding,
+    TokenizerFiles, UserDefinedEmbeddingModel,
 };
 
 use once_cell::sync::OnceCell;
 use std::fs;
-use std::sync::{Arc, RwLock, Once};
+use std::sync::{Arc, Once, RwLock};
 use std::time::Instant;
 
 use crate::chunk::Chunk;
@@ -15,8 +15,6 @@ pub struct Embeddings {
     pub original: Vec<Chunk>,
     pub embedded: Vec<Vec<f32>>,
 }
-
-
 
 static MODEL_CELL: OnceCell<Arc<RwLock<TextEmbedding>>> = OnceCell::new();
 
