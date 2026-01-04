@@ -1,5 +1,6 @@
 use clap::{Arg, Parser, command, arg};
 use std::io::{self, Write};
+use qdrant_client::Qdrant;
 
 pub mod chunk;
 pub mod embed;
@@ -71,9 +72,32 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         // Handle search command
         if let Some(collection) = collection_name {
             println!("search paths: {:?}", &collection);
-        }
+            
+            // Prompt for query
+            print!("Enter your search query: ");
+            std::io::stdout().flush()?;
 
-        prompt_for_next()?;
+            let client = Qdrant::from_url("http://localhost:6334").build()?;
+            
+            let mut query = String::new();
+            std::io::stdin().read_line(&mut query)?;
+            let query = query.trim();
+            
+            if !query.is_empty() {
+               match qdrant::run_query(&client, &collection, query).await {
+                Ok(resp) => {
+                    println!("{:?}", resp)
+                    
+
+                }
+                Err(e) => return Err(e.into())
+               }
+            } else {
+                println!("No query entered.");
+            }
+}
+
+prompt_for_next()?;
     }
 }
 

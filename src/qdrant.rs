@@ -1,9 +1,14 @@
+use fastembed::Embedding;
 use qdrant_client::Qdrant;
 use qdrant_client::QdrantError;
 use qdrant_client::qdrant::Distance;
+use qdrant_client::qdrant::QueryResponse;
 use qdrant_client::qdrant::UpsertPointsBuilder;
 use qdrant_client::qdrant::{CreateCollectionBuilder, VectorParamsBuilder};
 use qdrant_client::qdrant::{PointStruct, Value};
+use qdrant_client::qdrant::QueryPointsBuilder;
+use qdrant_client::qdrant::SearchResponse;
+use qdrant_client::qdrant::SearchPointsBuilder;
 use std::collections::HashMap;
 
 use crate::embed;
@@ -63,4 +68,24 @@ pub async fn store_embeddings(
     dbg!(response);
 
     Ok(())
+}
+
+pub async fn run_query(client: &Qdrant, collection_name: &str, query: &str) -> Result<SearchResponse, anyhow::Error> {
+    let emb_query = match embed::embed_query(query) {
+        Ok(embedding) => embedding,
+        Err(e) => {
+            eprintln!("Failed to embed query: {}", e);
+            return Err(e);
+            
+        }
+    };
+    let search_result = client
+    .search_points(
+        SearchPointsBuilder::new(collection_name, emb_query, 5)
+            .with_payload(true)  // This enables payload return
+            .build()
+    )
+    .await?;
+
+    Ok(search_result)
 }

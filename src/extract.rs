@@ -1,13 +1,6 @@
-use fastembed::TextEmbedding;
-use lopdf::Document;
 use pdf_oxide::PdfDocument;
-use pdfium_render::prelude::*;
 use rayon::prelude::*;
-use std::fs;
-use std::path::Path;
-use std::sync::Arc;
-use std::time::Instant;
-use unidecode::unidecode;
+
 
 #[derive(Debug)]
 pub struct File {

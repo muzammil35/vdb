@@ -3,12 +3,10 @@ use fastembed::{
     EmbeddingModel, InitOptionsUserDefined, ModelTrait, QuantizationMode, TextEmbedding,
     TokenizerFiles, UserDefinedEmbeddingModel,
 };
-
 use once_cell::sync::OnceCell;
 use std::fs;
-use std::sync::{Arc, Once, RwLock};
-use std::time::Instant;
-
+use std::sync::{Arc, RwLock};
+ 
 use crate::chunk::Chunk;
 
 pub struct Embeddings {
@@ -44,20 +42,11 @@ fn initialize_model() -> Result<TextEmbedding, Error> {
 }
 
 pub fn get_embeddings(original: Vec<Chunk>) -> Result<Embeddings, Error> {
-    let function_start = Instant::now();
+    
 
     // Initialize model on first call
     let model = MODEL_CELL.get_or_try_init(|| {
-        println!("\n🔄 Initializing embedding model (first time only)...");
-        let init_start = Instant::now();
         let result = initialize_model();
-        let init_time = init_start.elapsed();
-
-        match &result {
-            Ok(_) => println!("✅ Model initialized in {:?}", init_time),
-            Err(e) => println!("❌ Model initialization failed: {}", e),
-        }
-
         result.map(|m| Arc::new(RwLock::new(m)))
     })?;
 
@@ -67,23 +56,28 @@ pub fn get_embeddings(original: Vec<Chunk>) -> Result<Embeddings, Error> {
         .map(|chunk| chunk.content.as_str())
         .collect();
 
-    println!("🚀 Generating embeddings for {} chunks...", contents.len());
-    let embed_start = Instant::now();
-
     // Generate embeddings (needs write lock for &mut self)
     let mut model_guard = model.write().unwrap();
     let embedded = model_guard.embed(contents, Some(32 as usize))?;
     drop(model_guard); // Explicit drop for clarity
 
-    let embed_time = embed_start.elapsed();
-    let total_time = function_start.elapsed();
-
-    println!(
-        "✅ Generated embeddings in {:?} (total: {:?})",
-        embed_time, total_time
-    );
-
     Ok(Embeddings { original, embedded })
+}
+
+pub fn embed_query(query: &str) -> Result<Vec<f32>, Error> {
+    
+    let model = MODEL_CELL.get_or_try_init(|| {
+        let result = initialize_model();
+        result.map(|m| Arc::new(RwLock::new(m)))
+    })?;
+
+    // Generate embedding for the single query
+    let mut model_guard = model.write().unwrap();
+    let embedded = model_guard.embed(vec![query], None)?;
+    drop(model_guard);
+
+    // Return the first (and only) embedding
+    Ok(embedded.into_iter().next().unwrap())
 }
 
 impl Embeddings {

@@ -1,6 +1,5 @@
-use crate::extract::File;
 use rayon::prelude::*;
-use uuid::Uuid;
+
 
 #[derive(Debug, Clone)]
 pub struct Chunk {
