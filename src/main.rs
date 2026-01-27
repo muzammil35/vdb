@@ -88,12 +88,13 @@ async fn run_repl() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             Some("search") => {
-                if parts.len() < 2 {
-                    println!("Usage: search <collection_name> ");
+                if parts.len() < 3 {
+                    println!("Usage: search <collection_name> <query>");
                     continue;
                 }
                 let collection_name = parts[1];
-                if let Err(e) = run_search(collection_name).await {
+                let query = parts[2..].join(" ");
+                if let Err(e) = run_search(collection_name, query).await {
                     eprintln!("Error searching: {}", e);
                 }
             }
@@ -128,10 +129,9 @@ fn print_help() {
 
 async fn process_file(file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Processing file: {}", file_path);
-    
     let res = extract::extract_text(file_path);
     let pages = res.get_pages();
-    let chunks = chunk::chunk_everything(pages);
+    let chunks = chunk::chunk_pages_with_splitter(pages, 200);
     let embedded_chunks = embed::get_embeddings(chunks)?;
     let client = qdrant::setup_qdrant(&embedded_chunks, file_path).await?;
     let response = qdrant::store_embeddings(&client, file_path, embedded_chunks).await?;
@@ -142,19 +142,9 @@ async fn process_file(file_path: &str) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
-async fn run_search(collection_name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    
-    let query = tokio::task::spawn_blocking(|| -> Result<String, io::Error> {
-        print!("Enter your search query: ");
-        io::stdout().flush()?;           // now ? works
-        let mut q = String::new();
-        io::stdin().read_line(&mut q)?;  // returns usize, ignore
-        Ok(q)
-    })
-    .await??; // first ? unwraps JoinHandle, second ? unwraps Result
+async fn run_search(collection_name: &str, query: String) -> Result<(), Box<dyn std::error::Error>> {
 
     let query = query.trim();
-
     if query.is_empty() {
         println!("No query entered.");
         return Ok(());
@@ -167,8 +157,10 @@ async fn run_search(collection_name: &str) -> Result<(), Box<dyn std::error::Err
     println!("===============");
     for point in resp.result {
         if let Some(text_value) = point.payload.get("text") {
+            let page = point.payload.get("page").unwrap();
             if let Some(text) = text_value.as_str() {
                 println!("-----");
+                println!("{:?}", page);
                 println!("{}", text);
             }
         }

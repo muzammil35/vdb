@@ -55,6 +55,8 @@ pub async fn store_embeddings(
             // Create payload with original chunk data from Embeddings.original
             let mut payload = HashMap::new();
             payload.insert("text".to_string(), Value::from(chunk.content.clone()));
+            // have to insert the page as a float as the qdrant crate does not provide support for u16
+            payload.insert("page".to_string(), Value::from(chunk.page as f32));
             // Add any other chunk fields you want to store
 
             PointStruct::new(
