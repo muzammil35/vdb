@@ -4,6 +4,7 @@ use qdrant_client::Qdrant;
 use std::fs;
 use serde::Deserialize;
 use axum::extract::Query;
+use tokio::io::{ AsyncBufReadExt, AsyncWriteExt};
 
 use axum::{
     Router,
@@ -88,7 +89,7 @@ async fn run_repl() -> Result<(), Box<dyn std::error::Error>> {
             }
             Some("search") => {
                 if parts.len() < 2 {
-                    println!("Usage: search <collection_name>");
+                    println!("Usage: search <collection_name> ");
                     continue;
                 }
                 let collection_name = parts[1];
@@ -142,18 +143,23 @@ async fn process_file(file_path: &str) -> Result<(), Box<dyn std::error::Error>>
 }
 
 async fn run_search(collection_name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    print!("Enter your search query: ");
-    io::stdout().flush()?;
     
-    let mut query = String::new();
-    io::stdin().read_line(&mut query)?;
+    let query = tokio::task::spawn_blocking(|| -> Result<String, io::Error> {
+        print!("Enter your search query: ");
+        io::stdout().flush()?;           // now ? works
+        let mut q = String::new();
+        io::stdin().read_line(&mut q)?;  // returns usize, ignore
+        Ok(q)
+    })
+    .await??; // first ? unwraps JoinHandle, second ? unwraps Result
+
     let query = query.trim();
-    
+
     if query.is_empty() {
         println!("No query entered.");
         return Ok(());
     }
-    
+
     let client = Qdrant::from_url("http://localhost:6334").build()?;
     let resp = qdrant::run_query(&client, collection_name, query).await?;
     
