@@ -111,287 +111,302 @@
     </div>
 
     <script>
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-    // Initialize EventBus for coordinating viewer components
-    const eventBus = new pdfjsViewer.EventBus();
-    
-    // Create link service for navigation
-    const pdfLinkService = new pdfjsViewer.PDFLinkService({
-        eventBus: eventBus,
-    });
+        // Initialize EventBus for coordinating viewer components
+        const eventBus = new pdfjsViewer.EventBus();
+        
+        // Create link service for navigation
+        const pdfLinkService = new pdfjsViewer.PDFLinkService({
+            eventBus: eventBus,
+        });
 
-    // Create PDF viewer
-    const pdfViewer = new pdfjsViewer.PDFViewer({
-        container: document.getElementById('viewerContainer'),
-        viewer: document.getElementById('viewer'),
-        eventBus: eventBus,
-        linkService: pdfLinkService,
-        textLayerMode: 1, // 0=disable, 1=enable, 2=enable enhanced
-        removePageBorders: false,
-    });
+        // Create PDF viewer
+        const pdfViewer = new pdfjsViewer.PDFViewer({
+            container: document.getElementById('viewerContainer'),
+            viewer: document.getElementById('viewer'),
+            eventBus: eventBus,
+            linkService: pdfLinkService,
+            textLayerMode: 1, // 0=disable, 1=enable, 2=enable enhanced
+            removePageBorders: false,
+        });
 
-    pdfLinkService.setViewer(pdfViewer);
-    
-    console.log('PDFViewer initialized with textLayerMode:', pdfViewer.textLayerMode);
+        pdfLinkService.setViewer(pdfViewer);
+        
+        console.log('PDFViewer initialized with textLayerMode:', pdfViewer.textLayerMode);
 
-    // UI elements
-    const searchInput = document.getElementById('search-input');
-    const prevButton = document.getElementById('prev-match');
-    const nextButton = document.getElementById('next-match');
-    const matchCounter = document.getElementById('match-counter');
-    const zoomSelect = document.getElementById('zoom-select');
-    const loading = document.getElementById('loading');
+        // UI elements
+        const searchInput = document.getElementById('search-input');
+        const prevButton = document.getElementById('prev-match');
+        const nextButton = document.getElementById('next-match');
+        const matchCounter = document.getElementById('match-counter');
+        const zoomSelect = document.getElementById('zoom-select');
+        const loading = document.getElementById('loading');
 
-    let currentMatchIndex = 0;
-    let totalMatches = 0;
-    let pdfFindController = null;
-    let pagesReady = 0;
+        let currentMatchIndex = 0;
+        let totalMatches = 0;
+        let pdfFindController = null;
+        let pagesReady = 0;
+        let backendMatches = []; // top 5 matches from backend
+        let currentSearchQuery = ''; // Store the original query
 
-    // Load PDF
-    async function loadPDF() {
-        try {
 
-            // Create find controller after document is loaded
-            pdfFindController = new pdfjsViewer.PDFFindController({
-                eventBus: eventBus,
-                linkService: pdfLinkService,
-                pdfViewer: pdfViewer,
-            });
+        // Load PDF
+        async function loadPDF() {
+            try {
 
-            // Set the find controller on the viewer BEFORE loading
-            pdfViewer.findController = pdfFindController;
+                // Create find controller after document is loaded
+                pdfFindController = new pdfjsViewer.PDFFindController({
+                    eventBus: eventBus,
+                    linkService: pdfLinkService,
+                    pdfViewer: pdfViewer,
+                });
 
-            const loadingTask = pdfjsLib.getDocument('/api/pdf');
-            const pdfDocument = await loadingTask.promise;
-            
-            pdfViewer.setDocument(pdfDocument);
-            pdfLinkService.setDocument(pdfDocument);
-            pdfFindController.setDocument(pdfDocument);
+                // Set the find controller on the viewer BEFORE loading
+                pdfViewer.findController = pdfFindController;
 
-            
-            loading.style.display = 'none';
-            
-            // Set initial scale
-            pdfViewer.currentScaleValue = '1.5';
-            
-            console.log('PDF loaded, total pages:', pdfDocument.numPages);
-        } catch (error) {
-            console.error('Error loading PDF:', error);
-            loading.innerHTML = '<p class="text-red-600">Error loading PDF</p>';
-        }
-    }
+                const loadingTask = pdfjsLib.getDocument('/api/pdf');
+                const pdfDocument = await loadingTask.promise;
+                
+                pdfViewer.setDocument(pdfDocument);
+                pdfLinkService.setDocument(pdfDocument);
+                pdfFindController.setDocument(pdfDocument);
 
-    // Search functionality
-    let searchTimeout = null;
-    
-    searchInput.addEventListener('input', (e) => {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => {
-            const query = e.target.value.trim();
-            
-            if (!query) {
-                // Clear search
-                if (pdfFindController) {
-                    eventBus.dispatch('findbarclose');
-                }
-                updateMatchCounter(0, 0);
-                return;
+                
+                loading.style.display = 'none';
+                
+                // Set initial scale
+                pdfViewer.currentScaleValue = '1.5';
+                
+                console.log('PDF loaded, total pages:', pdfDocument.numPages);
+            } catch (error) {
+                console.error('Error loading PDF:', error);
+                loading.innerHTML = '<p class="text-red-600">Error loading PDF</p>';
             }
+        }
 
-            // Wait a bit more for text layers to be ready
-            if (pagesReady < 1) {
-                console.log('Waiting for pages to render...');
-                setTimeout(() => {
+        // Search functionality
+        let searchTimeout = null;
+        
+        searchInput.addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                const query = e.target.value.trim();
+                
+                if (!query) {
+                    // Clear search
+                    if (pdfFindController) {
+                        eventBus.dispatch('findbarclose');
+                    }
+                    updateMatchCounter(0, 0);
+                    backendMatches = [];
+                    currentSearchQuery = '';
+                    return;
+                }
+
+                // Wait a bit more for text layers to be ready
+                if (pagesReady < 1) {
+                    console.log('Waiting for pages to render...');
+                    setTimeout(() => {
+                        performSearch(query);
+                    }, 500);
+                } else {
                     performSearch(query);
-                }, 500);
-            } else {
-                performSearch(query);
-            }
-        }, 300); // Debounce search
-    });
-    
-    function performSearch(query) {
-        console.log('Searching for:', query, 'Pages ready:', pagesReady);
-        eventBus.dispatch('find', {
-            type: 'find',
-            query: query,
-            caseSensitive: false,
-            entireWord: false,
-            highlightAll: true,
-            findPrevious: false,
-        });
-    }
-
-    // Listen for search results
-    eventBus.on('updatefindmatchescount', (e) => {
-        console.log('Match count update:', e);
-        if (e.matchesCount) {
-            totalMatches = e.matchesCount.total || 0;
-            currentMatchIndex = e.matchesCount.current || 0;
-            updateMatchCounter(currentMatchIndex, totalMatches);
-        }
-    });
-
-    // eventBus.on('updatefindcontrolstate', (e) => {
-    //     console.log('Find control state:', e);
-    //     if (e.state === pdfjsViewer.FindState.FOUND) {
-    //         if (e.matchesCount) {
-    //             currentMatchIndex = e.matchesCount.current || 0;
-    //             totalMatches = e.matchesCount.total || 0;
-    //             updateMatchCounter(currentMatchIndex, totalMatches);
-    //         }
-    //     } else if (e.state === pdfjsViewer.FindState.NOT_FOUND) {
-    //         updateMatchCounter(0, 0);
-    //     }
-    // });
-
-    let lastScrolledMatch = null;
-
-    function scrollIntoViewIfNotVisible(highlighted) {
-        if (highlighted === lastScrolledMatch) return;
-
-        const container = document.getElementById('viewerContainer');
-        const elementRect = highlighted.getBoundingClientRect();
-        const containerRect = container.getBoundingClientRect();
-
-        const isVisible =
-            elementRect.top >= containerRect.top &&
-            elementRect.bottom <= containerRect.bottom;
-
-        if (!isVisible) {
-            highlighted.scrollIntoView({ block: 'center' });
-            lastScrolledMatch = highlighted;
-        }
-    }
-
-
-
-    eventBus.on('updatefindcontrolstate', (e) => {
-        if (e.state === pdfjsViewer.FindState.FOUND) {
-            if (e.matchesCount) {
-                currentMatchIndex = e.matchesCount.current || 0;
-                totalMatches = e.matchesCount.total || 0;
-                updateMatchCounter(currentMatchIndex, totalMatches);
-            }
-            
-            setTimeout(() => {
-                const highlighted = document.querySelector('.highlight.selected');
-                const elementRect = highlighted.getBoundingClientRect();
-
-                // Find your scrollable container (adjust the selector to match your HTML)
-                const scrollContainer = document.querySelector('#viewerContainer'); // or whatever your container class is
-
-                const containerTop = scrollContainer.scrollTop;
-                const containerBottom = containerTop + scrollContainer.clientHeight;
-
-                const elementTop = highlighted.offsetTop;
-                const elementBottom = elementTop + highlighted.offsetHeight;
-
-
-            
-                if (highlighted) {
-                    console.log("top of current element: ", elementTop);
-                    console.log("bottom of current element: ", elementRect.bottom + scrollContainer.scrollTop);
-                    console.log("top of container",containerTop );
-                    console.log("bottom of container",containerBottom );
-                    scrollIntoViewIfNotVisible(highlighted);
-   
                 }
-            }, 100);
-        } else if (e.state === pdfjsViewer.FindState.NOT_FOUND) {
-            updateMatchCounter(0, 0);
-        }
-    });
-
-    function updateMatchCounter(current, total) {
-        if (total === 0) {
-            matchCounter.textContent = searchInput.value.trim() ? 'No matches' : '';
-            prevButton.disabled = true;
-            nextButton.disabled = true;
-        } else {
-            matchCounter.textContent = `${current} / ${total}`;
-            prevButton.disabled = false;
-            nextButton.disabled = false;
-        }
-    }
-
-    // Navigation buttons
-    prevButton.addEventListener('click', () => {
-        if (totalMatches === 0 || !pdfFindController) return;
-        
-        eventBus.dispatch('find', {
-            type: 'again',
-            query: searchInput.value.trim(),
-            caseSensitive: false,
-            entireWord: false,
-            highlightAll: true,
-            findPrevious: true,
+            }, 300); // Debounce search
         });
-    });
-
-    nextButton.addEventListener('click', () => {
-        if (totalMatches === 0 || !pdfFindController) return;
         
-        eventBus.dispatch('find', {
-            type: 'again',
-            query: searchInput.value.trim(),
-            caseSensitive: false,
-            entireWord: false,
-            highlightAll: true,
-            findPrevious: false,
-        });
-    });
+        async function performSearch(query) {
+            console.log('Searching for:', query, 'Pages ready:', pagesReady);
+            
+            // Store the original query for highlighting
+            currentSearchQuery = query;
 
-    // Keyboard shortcuts
-    searchInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            if (e.shiftKey) {
-                prevButton.click();
-            } else {
-                nextButton.click();
+            console.log('Calling backend search for:', query);
+
+            try {
+                const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+                if (!response.ok) throw new Error('Network response was not ok');
+
+                const results = await response.json(); // expected: [{page, text}]
+                console.log('Backend matches:', results);
+
+                // Take top 5 matches
+                backendMatches = results.slice(0, 5);
+                currentMatchIndex = 0;
+
+                if (backendMatches.length === 0) {
+                    updateMatchCounter(0, 0);
+                    return;
+                }
+
+                // Start highlighting the first backend match
+                highlightCurrentBackendMatch();
+
+            } catch (error) {
+                console.error('Error fetching backend search results:', error);
+                updateMatchCounter(0, 0);
             }
-        } else if (e.key === 'Escape') {
-            searchInput.value = '';
-            eventBus.dispatch('findbarclose');
-            updateMatchCounter(0, 0);
         }
-    });
 
-    // Zoom control
-    zoomSelect.addEventListener('change', (e) => {
-        pdfViewer.currentScaleValue = e.target.value;
-        
-        // Re-run search if active
-        if (pdfFindController && searchInput.value.trim()) {
+        function highlightCurrentBackendMatch() {
+            if (!pdfFindController || backendMatches.length === 0) return;
+
+            const match = backendMatches[currentMatchIndex];
+            
+            // Extract first 5-10 words from the snippet for better matching
+            // Remove special chars and get clean words
+            const words = match.text
+                .replace(/[^\w\s]/g, ' ')  // Remove special characters
+                .trim()
+                .split(/\s+/)              // Split on whitespace
+                .filter(w => w.length > 0); // Remove empty strings
+            
+            // Take first 5-10 words depending on length
+            const numWords = words.length > 10 ? 8 : Math.min(5, words.length);
+            const searchPhrase = words.slice(0, numWords).join(' ');
+            
+            console.log('Navigating to page:', match.page);
+            console.log('Original snippet:', match.text.substring(0, 100) + '...');
+            console.log('Search phrase:', searchPhrase);
+
+            // Scroll PDF to the page
+            pdfViewer.scrollPageIntoView({ pageNumber: match.page });
+
+            // Use the extracted phrase for highlighting
+            // Give the page time to render before searching
             setTimeout(() => {
                 eventBus.dispatch('find', {
                     type: 'find',
-                    query: searchInput.value.trim(),
+                    query: searchPhrase,
                     caseSensitive: false,
                     entireWord: false,
                     highlightAll: true,
                     findPrevious: false,
                 });
             }, 100);
+
+            updateMatchCounter(currentMatchIndex + 1, backendMatches.length);
         }
-    });
 
-    // Handle pages being rendered
-    eventBus.on('pagerendered', (e) => {
-        console.log(`Page ${Number(e.pageNumber)} rendered`);
-        pagesReady++;
-    });
-    
-    // Handle text layer rendered
-    eventBus.on('textlayerrendered', (e) => {
-        console.log(`Text layer ${Number(e.pageNumber)} rendered`);
-    });
 
-    // Load the PDF on page load
-    loadPDF();
+        // Listen for search results
+        eventBus.on('updatefindmatchescount', (e) => {
+            console.log('Match count update:', e);
+        });
+
+        let lastScrolledMatch = null;
+
+        function scrollIntoViewIfNotVisible(highlighted) {
+            if (!highlighted || highlighted === lastScrolledMatch) return;
+
+            const container = document.getElementById('viewerContainer');
+            const elementRect = highlighted.getBoundingClientRect();
+            const containerRect = container.getBoundingClientRect();
+
+            const isVisible =
+                elementRect.top >= containerRect.top &&
+                elementRect.bottom <= containerRect.bottom;
+
+            if (!isVisible) {
+                highlighted.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                lastScrolledMatch = highlighted;
+            }
+        }
+
+        eventBus.on('updatefindcontrolstate', (e) => {
+            console.log('Find control state:', e);
+            
+            if (e.state === pdfjsViewer.FindState.FOUND) {
+                setTimeout(() => {
+                    const highlighted = document.querySelector('.highlight.selected');
+                    if (highlighted) {
+                        scrollIntoViewIfNotVisible(highlighted);
+                    }
+                }, 100);
+            } else if (e.state === pdfjsViewer.FindState.NOT_FOUND) {
+                console.warn('Text not found on page');
+            }
+        });
+
+        function updateMatchCounter(current, total) {
+            if (total === 0) {
+                matchCounter.textContent = searchInput.value.trim() ? 'No matches' : '';
+                prevButton.disabled = true;
+                nextButton.disabled = true;
+            } else {
+                matchCounter.textContent = `${current} / ${total}`;
+                prevButton.disabled = current <= 1;
+                nextButton.disabled = current >= total;
+            }
+        }
+
+        prevButton.addEventListener('click', () => {
+            if (backendMatches.length === 0) return;
+
+            currentMatchIndex = Math.max(0, currentMatchIndex - 1);
+            highlightCurrentBackendMatch();
+        });
+
+        nextButton.addEventListener('click', () => {
+            if (backendMatches.length === 0) return;
+
+            currentMatchIndex = Math.min(backendMatches.length - 1, currentMatchIndex + 1);
+            highlightCurrentBackendMatch();
+        });
+
+
+        // Keyboard shortcuts
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (e.shiftKey) {
+                    prevButton.click();
+                } else {
+                    nextButton.click();
+                }
+            } else if (e.key === 'Escape') {
+                searchInput.value = '';
+                eventBus.dispatch('findbarclose');
+                updateMatchCounter(0, 0);
+                backendMatches = [];
+                currentSearchQuery = '';
+            }
+        });
+
+        // Zoom control
+        zoomSelect.addEventListener('change', (e) => {
+            pdfViewer.currentScaleValue = e.target.value;
+            
+            // Re-run search if active
+            if (pdfFindController && currentSearchQuery) {
+                setTimeout(() => {
+                    eventBus.dispatch('find', {
+                        type: 'find',
+                        query: currentSearchQuery,
+                        caseSensitive: false,
+                        entireWord: false,
+                        highlightAll: true,
+                        findPrevious: false,
+                    });
+                }, 100);
+            }
+        });
+
+        // Handle pages being rendered
+        eventBus.on('pagerendered', (e) => {
+            console.log(`Page ${Number(e.pageNumber)} rendered`);
+            pagesReady++;
+        });
+        
+        // Handle text layer rendered
+        eventBus.on('textlayerrendered', (e) => {
+            console.log(`Text layer ${Number(e.pageNumber)} rendered`);
+        });
+
+        // Load the PDF on page load
+        loadPDF();
     </script>
 </body>
 </html>

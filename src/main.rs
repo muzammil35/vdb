@@ -23,6 +23,19 @@ struct Args {
     search: Option<String>,
 }
 
+// Response structure for the search API
+#[derive(Serialize)]
+struct SearchResult {
+    page: i64,
+    text: String,
+}
+
+// Query parameter structure for /api/search
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: String,
+}
+
 #[tokio::main]
 async fn main() {
     let banner = r#"
@@ -86,17 +99,18 @@ async fn run_repl() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 let collection_name = parts[1];
                 let query = parts[2..].join(" ");
-                if let Err(e) = run_search(collection_name, query).await {
+                if let Err(e) = run_search_repl(collection_name, query).await {
                     eprintln!("Error searching: {}", e);
                 }
             }
             Some("serve") => {
-                if parts.len() < 2 {
-                    println!("Usage: serve <file_path>");
+                if parts.len() < 3 {
+                    println!("Usage: serve <file_path> <collection_name>");
                     continue;
                 }
                 let file_path = parts[1];
-                if let Err(e) = start_server(file_path).await {
+                let collection_name = parts[2];
+                if let Err(e) = start_server(file_path, collection_name).await {
                     eprintln!("Error starting server: {}", e);
                 }
             }
@@ -115,11 +129,11 @@ async fn run_repl() -> Result<(), Box<dyn std::error::Error>> {
 
 fn print_help() {
     println!("Available commands:");
-    println!("  file <path>              - Process and index a file");
-    println!("  search <collection>      - Search in a collection");
-    println!("  serve <file_path>        - Start web server to view PDF");
-    println!("  help                     - Show this help message");
-    println!("  exit/quit                - Exit the program");
+    println!("  file <path>                        - Process and index a file");
+    println!("  search <collection> <query>        - Search in a collection");
+    println!("  serve <file_path> <collection>     - Start web server with PDF viewer and search API");
+    println!("  help                               - Show this help message");
+    println!("  exit/quit                          - Exit the program");
 }
 
 async fn process_file(file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -139,7 +153,8 @@ async fn process_file(file_path: &str) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
-async fn run_search(
+// REPL version of search (prints to console)
+async fn run_search_repl(
     collection_name: &str,
     query: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -168,26 +183,101 @@ async fn run_search(
     Ok(())
 }
 
-async fn start_server(file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+// API version of search (returns JSON)
+async fn run_search_api(
+    collection_name: &str,
+    query: String,
+) -> Result<Vec<SearchResult>, Box<dyn std::error::Error>> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let client = Qdrant::from_url("http://localhost:6334").build()?;
+    let resp = qdrant::run_query(&client, collection_name, &query).await?;
+
+    let mut results = Vec::new();
+    
+    for point in resp.result {
+        if let Some(text_value) = point.payload.get("text") {
+            if let Some(page_value) = point.payload.get("page") {
+                if let Some(text) = text_value.as_str() {
+                    // Extract page number - handle different number types
+                    use qdrant_client::qdrant::value::Kind;
+                    
+                    let page = match &page_value.kind {
+                        Some(Kind::DoubleValue(d)) => *d as i64,
+                        Some(Kind::IntegerValue(i)) => *i,
+                        Some(Kind::StringValue(s)) => s.parse::<i64>().unwrap_or(1),
+                        _ => 1,
+                    };
+                        
+                    results.push(SearchResult {
+                        page,
+                        text: text.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+// Handler for /api/search endpoint
+async fn search_handler(
+    Query(params): Query<SearchQuery>,
+    axum::extract::State(collection_name): axum::extract::State<String>,
+) -> Result<Json<Vec<SearchResult>>, (StatusCode, String)> {
+    let query = params.q.trim();
+    
+    if query.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Query parameter 'q' cannot be empty".to_string(),
+        ));
+    }
+
+    match run_search_api(&collection_name, query.to_string()).await {
+        Ok(results) => Ok(Json(results)),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Search failed: {}", e),
+        )),
+    }
+}
+
+async fn start_server(file_path: &str, collection_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let file_path = file_path.to_string();
+    let collection_name = collection_name.to_string();
 
     // Verify the file exists
     if !std::path::Path::new(&file_path).exists() {
         return Err(format!("File not found: {}", file_path).into());
     }
 
-    let app = Router::new().route("/", get(render_pdf)).route(
-        "/api/pdf",
-        get({
-            let path = file_path.clone();
-            move || serve_pdf(path.clone())
-        }),
-    );
+    // Build the router with state for collection_name
+    let app = Router::new()
+        .route("/", get(render_pdf))
+        .route(
+            "/api/pdf",
+            get({
+                let path = file_path.clone();
+                move || serve_pdf(path.clone())
+            }),
+        )
+        .route("/api/search", get(search_handler))
+        .with_state(collection_name.clone());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
 
     println!("Server running on http://127.0.0.1:3000");
     println!("Serving PDF: {}", file_path);
+    println!("Search collection: {}", collection_name);
+    println!("API endpoints:");
+    println!("  - PDF viewer: http://127.0.0.1:3000/");
+    println!("  - PDF file: http://127.0.0.1:3000/api/pdf");
+    println!("  - Search: http://127.0.0.1:3000/api/search?q=<query>");
     println!("Press Ctrl+C to stop the server");
 
     axum::serve(listener, app).await?;
@@ -207,553 +297,4 @@ async fn render_pdf() -> Result<Html<String>, StatusCode> {
         Ok(contents) => Ok(Html(contents)),
         Err(_) => Err(StatusCode::NOT_FOUND),
     }
-}
-
-async fn render_pdf_() -> Html<String> {
-    Html(r#"
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>PDF Viewer</title>
-        <script src="https://cdn.tailwindcss.com"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-        <style>
-            canvas {
-                position: absolute;
-                top: 0;
-                left: 0;
-            }
-            .textLayer {
-                position: absolute;
-                top: 0;
-                left: 0;
-                overflow: hidden;
-                opacity: 0.2;
-                line-height: 1.0;
-            }
-            .textLayer > span {
-                color: transparent;
-                position: absolute;
-                white-space: pre;
-                cursor: text;
-                transform-origin: 0% 0%;
-            }
-            .textLayer .highlight {
-                background-color: rgba(255, 255, 0, 0.6);
-                border-radius: 2px;
-            }
-            .textLayer .highlight.selected {
-                background-color: rgba(255, 153, 0, 0.8);
-            }
-            .page-wrapper {
-                position: relative;
-                margin-bottom: 20px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                background: white;
-            }
-            #pdf-container {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-            }
-            #search-bar {
-                position: sticky;
-                top: 0;
-                z-index: 100;
-                background: white;
-                padding: 1rem;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }
-        </style>
-    </head>
-    <body class="bg-gray-100">
-        <div id="search-bar" class="container mx-auto">
-            <div class="flex gap-2 items-center">
-                <input 
-                    type="text" 
-                    id="search-input" 
-                    placeholder="Search in PDF..." 
-                    class="flex-1 border rounded px-3 py-2"
-                />
-                <button 
-                    id="prev-match" 
-                    class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600 disabled:bg-gray-300"
-                    disabled
-                >
-                    ← Previous
-                </button>
-                <button 
-                    id="next-match" 
-                    class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600 disabled:bg-gray-300"
-                    disabled
-                >
-                    Next →
-                </button>
-                <span id="match-counter" class="text-sm text-gray-600 min-w-[100px]"></span>
-                <select id="zoom-select" class="border rounded px-2 py-1 text-sm">
-                    <option value="0.5">50%</option>
-                    <option value="0.75">75%</option>
-                    <option value="1">100%</option>
-                    <option value="1.5" selected>150%</option>
-                    <option value="2">200%</option>
-                    <option value="2.5">250%</option>
-                    <option value="3">300%</option>
-                </select>
-            </div>
-        </div>
-
-        <div class="container mx-auto p-4">
-            <div id="loading" class="text-center py-8">
-                <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900"></div>
-                <p class="mt-4 text-gray-600">Loading PDF...</p>
-            </div>
-            
-            <div id="pdf-container"></div>
-        </div>
-
-        <script>
-        pdfjsLib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
-        let pdfDoc = null;
-        let currentScale = 1.5;
-        const MAX_OUTPUT_SCALE = 2;
-        const renderedPages = new Map();
-        const renderTasks = new Map();
-        const textLayers = new Map();
-        
-        let searchMatches = [];
-        let currentMatchIndex = -1;
-
-        const container = document.getElementById('pdf-container');
-        const loading = document.getElementById('loading');
-        const searchInput = document.getElementById('search-input');
-        const prevButton = document.getElementById('prev-match');
-        const nextButton = document.getElementById('next-match');
-        const matchCounter = document.getElementById('match-counter');
-
-        async function loadPDF() {
-            const loadingTask = pdfjsLib.getDocument('/api/pdf');
-            pdfDoc = await loadingTask.promise;
-            loading.style.display = 'none';
-
-            createPagePlaceholders();
-            setupObserver();
-        }
-
-        function createPagePlaceholders() {
-            for (let i = 1; i <= pdfDoc.numPages; i++) {
-                const wrapper = document.createElement('div');
-                wrapper.className = 'page-wrapper';
-                wrapper.dataset.page = i;
-                
-                const canvas = document.createElement('canvas');
-                canvas.dataset.page = i;
-                
-                const textLayerDiv = document.createElement('div');
-                textLayerDiv.className = 'textLayer';
-                textLayerDiv.dataset.page = i;
-                
-                wrapper.appendChild(canvas);
-                wrapper.appendChild(textLayerDiv);
-                container.appendChild(wrapper);
-            }
-        }
-
-        function setupObserver() {
-            const observer = new IntersectionObserver(
-                entries => {
-                    entries.forEach(entry => {
-                        if (entry.isIntersecting) {
-                            const pageNum = Number(entry.target.dataset.page);
-                            renderPage(pageNum);
-                        }
-                    });
-                },
-                { rootMargin: '200px' }
-            );
-
-            document.querySelectorAll('.page-wrapper').forEach(w => observer.observe(w));
-        }
-
-        async function renderPage(pageNum) {
-            if (renderedPages.get(pageNum) === currentScale) return;
-
-            if (renderTasks.has(pageNum)) {
-                renderTasks.get(pageNum).cancel();
-            }
-
-            const page = await pdfDoc.getPage(pageNum);
-            const viewport = page.getViewport({ scale: currentScale });
-
-            const wrapper = document.querySelector(`.page-wrapper[data-page="${pageNum}"]`);
-            const canvas = wrapper.querySelector('canvas');
-            const textLayerDiv = wrapper.querySelector('.textLayer');
-
-            const outputScale = Math.min(window.devicePixelRatio || 1, MAX_OUTPUT_SCALE);
-            const ctx = canvas.getContext('2d');
-
-            canvas.width = Math.floor(viewport.width * outputScale);
-            canvas.height = Math.floor(viewport.height * outputScale);
-            canvas.style.width = `${viewport.width}px`;
-            canvas.style.height = `${viewport.height}px`;
-            
-            wrapper.style.width = `${viewport.width}px`;
-            wrapper.style.height = `${viewport.height}px`;
-            textLayerDiv.style.width = `${viewport.width}px`;
-            textLayerDiv.style.height = `${viewport.height}px`;
-
-            const renderTask = page.render({
-                canvasContext: ctx,
-                viewport,
-                transform: outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null
-            });
-
-            renderTasks.set(pageNum, renderTask);
-
-            try {
-                await renderTask.promise;
-                renderedPages.set(pageNum, currentScale);
-                
-                // Render text layer
-                await renderTextLayer(page, viewport, textLayerDiv, pageNum);
-            } catch (e) {
-                if (e?.name !== 'RenderingCancelledException') {
-                    console.error(e);
-                }
-            }
-        }
-
-        async function renderTextLayer(page, viewport, textLayerDiv, pageNum) {
-            const textContent = await page.getTextContent();
-            textLayerDiv.innerHTML = '';
-            
-            const textLayer = {
-                textContent,
-                container: textLayerDiv,
-                viewport,
-                textDivs: []
-            };
-
-            textContent.items.forEach((item) => {
-                const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
-                const style = textContent.styles[item.fontName];
-                
-                const span = document.createElement('span');
-                span.textContent = item.str;
-                span.style.left = `${tx[4]}px`;
-                span.style.top = `${tx[5]}px`;
-                span.style.fontSize = `${Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3])}px`;
-                span.style.fontFamily = style ? style.fontFamily : 'sans-serif';
-                
-                textLayerDiv.appendChild(span);
-                textLayer.textDivs.push(span);
-            });
-
-            textLayers.set(pageNum, textLayer);
-            
-            // Re-apply search highlights if there's an active search
-            if (searchInput.value) {
-                highlightSearchInPage(pageNum, searchInput.value);
-            }
-        }
-
-        function highlightSearchInPage(pageNum, searchText) {
-            const textLayer = textLayers.get(pageNum);
-            if (!textLayer) return;
-
-            const matches = [];
-            const searchLower = searchText.toLowerCase();
-
-            textLayer.textDivs.forEach((span, index) => {
-                span.classList.remove('highlight', 'selected');
-                
-                const text = span.textContent.toLowerCase();
-                if (text.includes(searchLower)) {
-                    span.classList.add('highlight');
-                    matches.push({ pageNum, span, index });
-                }
-            });
-
-            return matches;
-        }
-
-        function performSearch(searchText) {
-            searchMatches = [];
-            currentMatchIndex = -1;
-
-            if (!searchText) {
-                clearHighlights();
-                updateMatchCounter();
-                return;
-            }
-
-            // Search in all rendered pages
-            textLayers.forEach((_, pageNum) => {
-                const pageMatches = highlightSearchInPage(pageNum, searchText);
-                if (pageMatches) {
-                    searchMatches.push(...pageMatches);
-                }
-            });
-
-            updateMatchCounter();
-            
-            if (searchMatches.length > 0) {
-                currentMatchIndex = 0;
-                scrollToMatch(0);
-            }
-        }
-
-        function clearHighlights() {
-            textLayers.forEach(textLayer => {
-                textLayer.textDivs.forEach(span => {
-                    span.classList.remove('highlight', 'selected');
-                });
-            });
-        }
-
-        function scrollToMatch(index) {
-            if (index < 0 || index >= searchMatches.length) return;
-
-            // Remove 'selected' from previous match
-            searchMatches.forEach(match => {
-                match.span.classList.remove('selected');
-            });
-
-            // Add 'selected' to current match
-            const match = searchMatches[index];
-            match.span.classList.add('selected');
-            
-            // Scroll to the match
-            match.span.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            
-            currentMatchIndex = index;
-            updateMatchCounter();
-        }
-
-        function updateMatchCounter() {
-            const total = searchMatches.length;
-            if (total === 0) {
-                matchCounter.textContent = '';
-                prevButton.disabled = true;
-                nextButton.disabled = true;
-            } else {
-                matchCounter.textContent = `${currentMatchIndex + 1} / ${total}`;
-                prevButton.disabled = false;
-                nextButton.disabled = false;
-            }
-        }
-
-        // Event listeners
-        searchInput.addEventListener('input', (e) => {
-            performSearch(e.target.value);
-        });
-
-        prevButton.addEventListener('click', () => {
-            if (searchMatches.length === 0) return;
-            const newIndex = (currentMatchIndex - 1 + searchMatches.length) % searchMatches.length;
-            scrollToMatch(newIndex);
-        });
-
-        nextButton.addEventListener('click', () => {
-            if (searchMatches.length === 0) return;
-            const newIndex = (currentMatchIndex + 1) % searchMatches.length;
-            scrollToMatch(newIndex);
-        });
-
-        // Keyboard shortcuts
-        searchInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                if (e.shiftKey) {
-                    prevButton.click();
-                } else {
-                    nextButton.click();
-                }
-            }
-        });
-
-        document.getElementById('zoom-select').addEventListener('change', e => {
-            currentScale = Math.min(parseFloat(e.target.value), 2);
-            renderedPages.clear();
-            textLayers.clear();
-
-            renderTasks.forEach(task => task.cancel());
-            renderTasks.clear();
-
-            document.querySelectorAll('.page-wrapper').forEach(wrapper => {
-                const rect = wrapper.getBoundingClientRect();
-                if (rect.top < window.innerHeight + 200 && rect.bottom > -200) {
-                    renderPage(Number(wrapper.dataset.page));
-                }
-            });
-        });
-
-        loadPDF();
-        </script>
-
-    </body>
-    </html>
-    "#.to_string())
-}
-
-async fn home_page() -> Html<String> {
-    Html(r#"
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>PDF Viewer</title>
-        <script src="https://cdn.tailwindcss.com"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-        <style>
-            canvas {
-                display: block;
-                margin-bottom: 20px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            }
-            #pdf-container {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-            }
-        </style>
-    </head>
-    <body class="bg-gray-100">
-        <div class="container mx-auto p-4">
-            <div class="flex justify-end mb-4">
-                <select id="zoom-select" class="border rounded px-2 py-1 text-sm">
-                    <option value="0.5">50%</option>
-                    <option value="0.75">75%</option>
-                    <option value="1">100%</option>
-                    <option value="1.5" selected>150%</option>
-                    <option value="2">200%</option>
-                    <option value="2.5">250%</option>
-                    <option value="3">300%</option>
-                </select>
-            </div>
-            
-            <div id="loading" class="text-center py-8">
-                <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900"></div>
-                <p class="mt-4 text-gray-600">Loading PDF...</p>
-            </div>
-            
-            <div id="pdf-container"></div>
-        </div>
-
-        <script>
-        pdfjsLib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
-        let pdfDoc = null;
-        let currentScale = 1.5;
-        const MAX_OUTPUT_SCALE = 2;
-        const renderedPages = new Map();
-        const renderTasks = new Map();
-
-        const container = document.getElementById('pdf-container');
-        const loading = document.getElementById('loading');
-
-        async function loadPDF() {
-        const loadingTask = pdfjsLib.getDocument('/api/pdf');
-        pdfDoc = await loadingTask.promise;
-        loading.style.display = 'none';
-
-        createPagePlaceholders();
-        setupObserver();
-        }
-
-        function createPagePlaceholders() {
-        for (let i = 1; i <= pdfDoc.numPages; i++) {
-            const canvas = document.createElement('canvas');
-            canvas.dataset.page = i;
-            canvas.style.marginBottom = '20px';
-            container.appendChild(canvas);
-        }
-        }
-
-        function setupObserver() {
-        const observer = new IntersectionObserver(
-            entries => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                const pageNum = Number(entry.target.dataset.page);
-                renderPage(pageNum, entry.target);
-                }
-            });
-            },
-            { rootMargin: '200px' }
-        );
-
-        document.querySelectorAll('canvas').forEach(c => observer.observe(c));
-        }
-
-        async function renderPage(pageNum, canvas) {
-        if (renderedPages.get(pageNum) === currentScale) return;
-
-        // cancel previous render
-        if (renderTasks.has(pageNum)) {
-            renderTasks.get(pageNum).cancel();
-        }
-
-        const page = await pdfDoc.getPage(pageNum);
-        const viewport = page.getViewport({ scale: currentScale });
-
-        const outputScale = Math.min(
-            window.devicePixelRatio || 1,
-            MAX_OUTPUT_SCALE
-        );
-
-        const ctx = canvas.getContext('2d');
-
-        canvas.width = Math.floor(viewport.width * outputScale);
-        canvas.height = Math.floor(viewport.height * outputScale);
-        canvas.style.width = `${viewport.width}px`;
-        canvas.style.height = `${viewport.height}px`;
-
-        const renderTask = page.render({
-            canvasContext: ctx,
-            viewport,
-            transform:
-            outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null
-        });
-
-        renderTasks.set(pageNum, renderTask);
-
-        try {
-            await renderTask.promise;
-            renderedPages.set(pageNum, currentScale);
-        } catch (e) {
-            if (e?.name !== 'RenderingCancelledException') {
-            console.error(e);
-            }
-        }
-        }
-
-        document.getElementById('zoom-select').addEventListener('change', e => {
-        currentScale = Math.min(parseFloat(e.target.value), 2);
-        renderedPages.clear();
-
-        // cancel all in-flight renders
-        renderTasks.forEach(task => task.cancel());
-        renderTasks.clear();
-
-        // re-render only visible pages
-        document.querySelectorAll('canvas').forEach(canvas => {
-            const rect = canvas.getBoundingClientRect();
-            if (rect.top < window.innerHeight + 200 && rect.bottom > -200) {
-            renderPage(Number(canvas.dataset.page), canvas);
-            }
-        });
-        });
-
-        loadPDF();
-        </script>
-
-    </body>
-    </html>
-    "#.to_string())
 }
