@@ -31,6 +31,7 @@ pdfium-render = "0.8"
 image = "0.25"
 tiktoken-rs = "0.9.1"
 regex = "1.12.2"
+oxidize-pdf = "1.6.11"
 
 
 

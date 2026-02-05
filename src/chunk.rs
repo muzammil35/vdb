@@ -3,11 +3,46 @@ use rayon::prelude::*;
 use regex::Regex;
 use text_splitter::TextSplitter;
 use unicode_segmentation::UnicodeSegmentation;
+use lopdf::Document;
 
 #[derive(Debug, Clone)]
 pub struct Chunk {
     pub content: String,
     pub page: u16,
+}
+
+ pub fn extract_and_chunk(pdf_path: &str) -> Result<Vec<Chunk>, Box<dyn std::error::Error>> {
+    // Load the PDF
+    let doc = Document::load(pdf_path)?;
+    
+    // Extract text from all pages
+    let mut full_text = String::new();
+    let pages = doc.get_pages();
+
+    let mut chunks: Vec<Chunk> = Vec::new();
+
+    // Create splitter - overlap is passed to chunks() method, not in constructor
+    let splitter = TextSplitter::new(500); // chunk size
+    
+    for &page_num in pages.keys() {
+        if let Ok(text) = doc.extract_text(&[page_num]) {
+            let chunk_texts: Vec<_> = splitter.chunks(&text).collect();
+
+            for chunk in chunk_texts {
+                chunks.push(Chunk {
+                    content: chunk.to_string(),
+                    page: (page_num) as u16,
+                });
+            }
+        }
+    }
+
+    println!("Created {} chunks", chunks.len());
+    for (i, chunk) in chunks.iter().enumerate() {
+        println!("\n--- Chunk {} ---\n{}", i + 1, chunk.content);
+    }
+    
+    Ok(chunks)
 }
 
 pub fn chunk_pages_with_splitter(pages: &[Page], max_chars: usize) -> Vec<Chunk> {

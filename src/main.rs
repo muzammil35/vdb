@@ -8,6 +8,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use axum::{Json, Router, body::Body, http::StatusCode, response::Html, routing::get};
 use serde::Serialize;
 
+use crate::chunk::chunk_pages_with_splitter;
+
 pub mod chunk;
 pub mod embed;
 pub mod extract;
@@ -139,10 +141,11 @@ fn print_help() {
 async fn process_file(file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Processing file: {}", file_path);
 
-    let file = extract::extract_pdf_file(file_path);
+    //let file = extract::extract_pdf_file(file_path);
 
-    let pages = file.get_pages();
-    let chunks = chunk::chunk_per_page(pages);
+    //let pages = file.get_pages();
+    //let chunks = chunk::chunk_per_page(pages);
+    let chunks = chunk::extract_and_chunk(file_path)?;
     let embedded_chunks = embed::get_embeddings(chunks)?;
     let client = qdrant::setup_qdrant(&embedded_chunks, file_path).await?;
     let response = qdrant::store_embeddings(&client, file_path, embedded_chunks).await?;
