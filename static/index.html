@@ -33,12 +33,23 @@
         
         /* Search highlights - using PDF.js classes */
         .textLayer .highlight {
-            background-color: rgba(255, 237, 0, 0.4);
+            background-color: rgba(255, 140, 0, 0.6);
             border-radius: 2px;
+        }
+
+        .backend-highlight {
+            background: rgba(255, 140, 0, 0.6);
+            border-radius: 2px;
+        }
+
+        .post-match-highlight {
+            background: rgba(255, 140, 0, 0.6); /* light blue */
+            border-radius: 2px;  
         }
         
         .textLayer .highlight.selected {
             background-color: rgba(255, 140, 0, 0.6);
+            border-radius: 2px;
         }
         
         #viewerContainer {
@@ -151,8 +162,7 @@
         let backendMatches = []; // top 5 matches from backend
         let currentSearchQuery = ''; // Store the original query
         let pdfDocument = null;
-
-
+        const pageTextIndex = new Map(); // pageNumber -> { fullText, items, offsetMap }
         // Load PDF
         async function loadPDF() {
             try {
@@ -251,109 +261,174 @@
             }
         }
 
-        function fixHyphenatedWords(text) {
-            // Pattern: hyphen followed by optional whitespace, newline, then a letter
-            // This catches cases like "pro- grammers" or "pro-\ngrammers"
-            const pattern = /(\w+)-\s+(\w+)/g;
-            
-            return text.replace(pattern, '$1-$2');
-        }
-
-        async function findAndExtractExcerpt(textContent, firstThreeWords, remaining_search_len) {
-            // Get all text content from the page
-            const items = textContent.items;
-            
-            // Build the full text of the page
-            const fullText = items.map(item => item.str).join(' ');
-            
-            // Normalize whitespace in search terms
-            const startPhrase = firstThreeWords.trim().replace(/\s+/g, ' ');
-            const endPhrase = lastThreeWords.trim().replace(/\s+/g, ' ');
-            
-            // Find the start and end positions in the full text
-            const startIndex = fullText.indexOf(startPhrase);
-            const endIndex = fullText.indexOf(endPhrase);
-            
-            if (startIndex === -1 || endIndex === -1) {
-                console.error('Could not find excerpt boundaries');
-                return null;
-            }
-                    
-            // Extract the excerpt
-            const excerpt = fullText.substring(startIndex, rem);
-            
-            // Get all items in the excerpt range
-            const excerptItems = items.slice(excerptStartItem, excerptEndItem + 1);
-            console.log(excerptItems);
-            console.log(excerpt);
-
-            return {
-                found: excerptStartItem !== -1 && excerptEndItem !== -1,
-                excerpt: excerpt,
-                startIndex,
-                endIndex
-            };
-
-        }
-
-
         async function highlightCurrentBackendMatch() {
             if (!pdfFindController || backendMatches.length === 0) return;
 
             const match = backendMatches[currentMatchIndex];
-            
+
             console.log('Navigating to page:', match.page);
             console.log('Chunk text:', match.text.substring(0, 100) + '...');
 
-            // Scroll PDF to the page
+            // Scroll to page
             pdfViewer.scrollPageIntoView({ pageNumber: match.page });
 
-            // Wait for page to render, then get its text
-            setTimeout(async () => {
-                try {
-                    const page = await pdfDocument.getPage(match.page);
-                    const textContent = await page.getTextContent();
-                    const pageText = textContent.items.map(item => item.str).join(' ');
+            // Extract first 3 words ONLY
+            const words = match.text.trim().split(/\s+/);
+            const first3 = words.slice(0, 3).join(' ');
 
-                    const words = match.text.trim().split(/\s+/);
-                    const first3 = words.slice(0, 3).join(' ');
+            console.log('Searching for first words:', first3);
 
-                    const remaining_search_len = match.text.length - first3.length
-                    
-                    const searchResult = await findAndExtractExcerpt(textContent, first3, remaining_search_len)
-                    
-                    if (searchResult.found) {
-                        console.log('Found chunk boundaries - searching for first words:', searchResult.firstWords);
-                        
-                        // Search for the first few words to navigate to the chunk
-                        eventBus.dispatch('find', {
-                            type: 'find',
-                            query: searchResult.excerpt,
-                            caseSensitive: false,
-                            entireWord: false,
-                            highlightAll: false,
-                            findPrevious: false,
-                        });
-                    } else {
-                        console.warn('Could not locate chunk on page - falling back to full text search');
-                        // Fallback to your original method
-                        const searchPhrase = fixHyphenatedWords(match.text);
-                        eventBus.dispatch('find', {
-                            type: 'find',
-                            query: searchPhrase,
-                            caseSensitive: false,
-                            entireWord: false,
-                            highlightAll: true,
-                            findPrevious: false,
-                        });
-                    }
-                } catch (error) {
-                    console.error('Error getting page text:', error);
-                }
-            }, 100);
+            // Give PDF.js a moment to render the page
+            setTimeout(() => {
+                eventBus.dispatch('find', {
+                    type: 'find',
+                    query: first3,
+                    caseSensitive: false,
+                    entireWord: false,
+                    highlightAll: false, // important
+                    findPrevious: false,
+                });
+            }, 150);
 
             updateMatchCounter(currentMatchIndex + 1, backendMatches.length);
         }
+
+        function highlightFromMatchToEndOfPage_() {
+            const selected = document.querySelector('.highlight.selected');
+            if (!selected) return;
+
+            const pageDiv = selected.closest('.page');
+            if (!pageDiv) return;
+
+            const textLayer = pageDiv.querySelector('.textLayer');
+            if (!textLayer) return;
+
+            // Get ALL spans in the text layer (not just direct children)
+            const spans = Array.from(textLayer.querySelectorAll('span'));
+            
+            // Find which span contains the selected highlight
+            let startSpan = null;
+            for (const span of spans) {
+                if (span.contains(selected) || span === selected) {
+                    startSpan = span;
+                    break;
+                }
+            }
+
+            if (!startSpan) return;
+            
+            const startIndex = spans.indexOf(startSpan);
+            if (startIndex === -1) return;
+
+            // Remove old highlights
+            textLayer.querySelectorAll('.post-match-highlight')
+                .forEach(el => el.classList.remove('post-match-highlight'));
+
+            // Highlight from the SAME span onward (including the matched words)
+            for (let i = startIndex; i < spans.length; i++) {
+                // Don't override the selected highlight styling
+                spans[i].classList.add('post-match-highlight');
+                
+            }
+        }
+
+        function highlightFromMatchToEndOfPage() {
+            const selected = document.querySelector('.highlight.selected');
+            if (!selected) return;
+
+            const pageDiv = selected.closest('.page');
+            if (!pageDiv) return;
+
+            const textLayer = pageDiv.querySelector('.textLayer');
+            if (!textLayer) return;
+
+            // Get ALL spans in the text layer
+            const spans = Array.from(textLayer.querySelectorAll('span'));
+            
+            // Find which span contains or comes after the selected highlight
+            let startIndex = -1;
+            for (let i = 0; i < spans.length; i++) {
+                const span = spans[i];
+                // Check if this span contains the highlight or comes after it
+                if (span.contains(selected) || span.querySelector('.highlight.selected')) {
+                    startIndex = i;
+                    break;
+                }
+            }
+
+            if (startIndex === -1) return;
+
+            // Remove old highlights
+            textLayer.querySelectorAll('.post-match-highlight')
+                .forEach(el => el.classList.remove('post-match-highlight'));
+
+            // Add highlight class to the matched span AND all following spans
+            for (let i = startIndex; i < spans.length; i++) {
+                spans[i].classList.add('post-match-highlight');
+            }
+        }
+
+        function highlightFromMatchToEndOfPage_() {
+            const selected = document.querySelector('.highlight.selected');
+            if (!selected) return;
+
+            const pageDiv = selected.closest('.page');
+            if (!pageDiv) return;
+
+            const textLayer = pageDiv.querySelector('.textLayer');
+            if (!textLayer) return;
+
+            const spans = Array.from(textLayer.querySelectorAll('span'));
+            
+            // Find which span contains the selected highlight
+            let startSpan = null;
+            for (const span of spans) {
+                if (span.contains(selected) || span === selected) {
+                    startSpan = span;
+                    break;
+                }
+            }
+
+            if (!startSpan) return;
+            
+            const startIndex = spans.indexOf(startSpan);
+            if (startIndex === -1) return;
+
+            // Remove old highlights
+            textLayer.querySelectorAll('.post-match-highlight')
+                .forEach(el => el.remove());
+
+            // Get the text content after the selected match
+            const selectedText = selected.textContent;
+            const spanText = startSpan.textContent;
+            const matchEndIndex = spanText.indexOf(selectedText) + selectedText.length;
+            
+            // Highlight remaining text in the same span
+            if (matchEndIndex < spanText.length) {
+                const remainingText = spanText.substring(matchEndIndex);
+                const highlight = document.createElement('span');
+                highlight.className = 'post-match-highlight';
+                highlight.textContent = remainingText;
+                
+                // Split the span content
+                startSpan.textContent = spanText.substring(0, matchEndIndex);
+                startSpan.parentNode.insertBefore(highlight, startSpan.nextSibling);
+            }
+
+            // Highlight all following spans by wrapping their content
+            for (let i = startIndex + 1; i < spans.length; i++) {
+                const span = spans[i];
+                if (span.textContent.trim()) {
+                    const highlight = document.createElement('span');
+                    highlight.className = 'post-match-highlight';
+                    highlight.textContent = span.textContent;
+                    span.textContent = '';
+                    span.appendChild(highlight);
+                }
+            }
+        }
+
+
 
         // Listen for search results
         eventBus.on('updatefindmatchescount', (e) => {
@@ -388,6 +463,7 @@
                     if (highlighted) {
                         scrollIntoViewIfNotVisible(highlighted);
                     }
+                    highlightFromMatchToEndOfPage();
                 }, 100);
             } else if (e.state === pdfjsViewer.FindState.NOT_FOUND) {
                 console.warn('Text not found on page');
@@ -460,13 +536,11 @@
 
         // Handle pages being rendered
         eventBus.on('pagerendered', (e) => {
-            console.log(`Page ${Number(e.pageNumber)} rendered`);
             pagesReady++;
         });
         
         // Handle text layer rendered
         eventBus.on('textlayerrendered', (e) => {
-            console.log(`Text layer ${Number(e.pageNumber)} rendered`);
         });
 
         // Load the PDF on page load
