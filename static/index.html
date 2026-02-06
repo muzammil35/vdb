@@ -293,6 +293,61 @@
             updateMatchCounter(currentMatchIndex + 1, backendMatches.length);
         }
 
+        function highlightFromMatchToEndOfPage() {
+            const selected = document.querySelector('.highlight.selected');
+            if (!selected) return;
+
+            const pageDiv = selected.closest('.page');
+            if (!pageDiv) return;
+
+            const textLayer = pageDiv.querySelector('.textLayer');
+            if (!textLayer) return;
+
+            // Get ALL spans in the text layer
+            const spans = Array.from(textLayer.querySelectorAll('span'));
+            
+            // Find which span contains or comes after the selected highlight
+            let startIndex = -1;
+            for (let i = 0; i < spans.length; i++) {
+                const span = spans[i];
+                // Check if this span contains the highlight or comes after it
+                if (span.contains(selected) || span.querySelector('.highlight.selected')) {
+                    startIndex = i;
+                    break;
+                }
+            }
+
+            if (startIndex === -1) return;
+
+            // Remove old highlights
+            textLayer.querySelectorAll('.post-match-highlight')
+                .forEach(el => el.classList.remove('post-match-highlight'));
+
+            // Add highlight class up to max 500 characters
+            let charCount = 0;
+            const maxChars = 500;
+            
+            for (let i = startIndex; i < spans.length; i++) {
+                const spanText = spans[i].textContent;
+                const remainingChars = maxChars - charCount;
+                
+                if (charCount >= maxChars) {
+                    break;
+                }
+                
+                if (charCount + spanText.length <= maxChars) {
+                    // Highlight entire span
+                    spans[i].classList.add('post-match-highlight');
+                    charCount += spanText.length;
+                } else {
+                    // Partial highlight - only highlight remaining chars
+                    spans[i].classList.add('post-match-highlight');
+                    charCount = maxChars;
+                    break;
+                }
+            }
+        }
+
         function highlightFromMatchToEndOfPage_() {
             const selected = document.querySelector('.highlight.selected');
             if (!selected) return;
@@ -329,42 +384,6 @@
                 // Don't override the selected highlight styling
                 spans[i].classList.add('post-match-highlight');
                 
-            }
-        }
-
-        function highlightFromMatchToEndOfPage() {
-            const selected = document.querySelector('.highlight.selected');
-            if (!selected) return;
-
-            const pageDiv = selected.closest('.page');
-            if (!pageDiv) return;
-
-            const textLayer = pageDiv.querySelector('.textLayer');
-            if (!textLayer) return;
-
-            // Get ALL spans in the text layer
-            const spans = Array.from(textLayer.querySelectorAll('span'));
-            
-            // Find which span contains or comes after the selected highlight
-            let startIndex = -1;
-            for (let i = 0; i < spans.length; i++) {
-                const span = spans[i];
-                // Check if this span contains the highlight or comes after it
-                if (span.contains(selected) || span.querySelector('.highlight.selected')) {
-                    startIndex = i;
-                    break;
-                }
-            }
-
-            if (startIndex === -1) return;
-
-            // Remove old highlights
-            textLayer.querySelectorAll('.post-match-highlight')
-                .forEach(el => el.classList.remove('post-match-highlight'));
-
-            // Add highlight class to the matched span AND all following spans
-            for (let i = startIndex; i < spans.length; i++) {
-                spans[i].classList.add('post-match-highlight');
             }
         }
 
