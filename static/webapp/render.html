@@ -169,7 +169,7 @@
 
     <script type="module">
         import {
-            performSearch,
+            performSearchWithId,
             highlightCurrentBackendMatch,
             state,
         } from "/static/utils.js";
@@ -184,8 +184,9 @@
         const uploadStatus = document.getElementById('uploadStatus');
         const backButton = document.getElementById('back-to-upload');
 
-        // Store PDF data globally
+        // Store PDF data and UUID globally
         let pdfData = null;
+        let documentId = null;
 
         // Initialize EventBus for coordinating viewer components
         let eventBus = null;
@@ -221,10 +222,16 @@
                     throw new Error('Upload failed');
                 }
 
-                // Get PDF data as blob
-                const blob = await response.blob();
-                pdfData = await blob.arrayBuffer();
+                // Get the JSON response with the ID
+                const responseData = await response.json();
+                documentId = responseData.id;
                 
+                console.log('Document ID received:', documentId);
+
+                // Read the file for viewing
+                const arrayBuffer = await file.arrayBuffer();
+                pdfData = arrayBuffer;
+    
                 // Switch to viewer
                 uploadSection.classList.add('hidden');
                 viewerSection.classList.remove('hidden');
@@ -247,6 +254,7 @@
             uploadSection.classList.remove('hidden');
             uploadForm.reset();
             pdfData = null;
+            documentId = null;
             
             // Clean up viewer
             if (pdfViewer) {
@@ -341,10 +349,10 @@
 
                     if (state.pagesReady < 1) {
                         setTimeout(() => {
-                            performSearch(query, pdfViewer, updateMatchCounter);
+                            performSearchWithID(query, documentId, pdfViewer, updateMatchCounter);
                         }, 500);
                     } else {
-                        performSearch(query, pdfViewer, updateMatchCounter);
+                        performSearchWithId(query, documentId, pdfViewer, updateMatchCounter);
                     }
                 }, 300);
             });

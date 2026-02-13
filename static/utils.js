@@ -21,6 +21,32 @@ export async function performSearch(query, pdfViewer, updateMatchCounter) {
     const results = await response.json();
     state.backendMatches = results.slice(0, 5);
     state.currentMatchIndex = 0;
+ 
+    if (state.backendMatches.length === 0) {
+      updateMatchCounter(0, 0);
+      clearHighlights();
+      return;
+    }
+
+    highlightCurrentBackendMatch(pdfViewer, updateMatchCounter);
+  } catch (err) {
+    console.error('Backend search error:', err);
+    updateMatchCounter(0, 0);
+  }
+}
+
+export async function performSearchWithId(query, Id,  pdfViewer, updateMatchCounter) {
+  state.currentSearchQuery = query;
+
+  try {
+    const response = await fetch(
+      `/api/search?q=${encodeURIComponent(query)}&id=${encodeURIComponent(Id)}`
+    );
+    if (!response.ok) throw new Error('Search request failed');
+
+    const results = await response.json();
+    state.backendMatches = results.slice(0, 5);
+    state.currentMatchIndex = 0;
 
     if (state.backendMatches.length === 0) {
       updateMatchCounter(0, 0);
