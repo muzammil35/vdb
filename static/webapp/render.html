@@ -8,7 +8,21 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: #f0f0f0;
+            color: #1a1a2e;
+            margin: 0;
+        }
+
         .hidden {
             display: none !important;
         }
@@ -17,8 +31,10 @@
         .page {
             position: relative;
             margin-bottom: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
             background: white;
+            border-radius: 8px;
+            overflow: hidden;
         }
         
         .page canvas {
@@ -31,27 +47,27 @@
         }
         
         .textLayer ::selection {
-            background: rgba(0, 123, 255, 0.3);
+            background: rgba(79, 70, 229, 0.3);
         }
         
         /* Search highlights */
         .textLayer .highlight {
-            background-color: rgba(255, 140, 0, 0.6);
+            background-color: rgba(251, 191, 36, 0.5);
             border-radius: 2px;
         }
 
         .backend-highlight {
-            background: rgba(255, 140, 0, 0.6);
+            background: rgba(251, 191, 36, 0.5);
             border-radius: 2px;
         }
 
         .post-match-highlight {
-            background: rgba(255, 140, 0, 0.6);
+            background: rgba(251, 191, 36, 0.5);
             border-radius: 2px;  
         }
         
         .textLayer .highlight.selected {
-            background-color: rgba(255, 140, 0, 0.6);
+            background-color: rgba(251, 191, 36, 0.5);
             border-radius: 2px;
         }
         
@@ -61,13 +77,14 @@
             width: 100%;
             top: 80px;
             bottom: 0;
+            background: #e8e8ec;
         }
         
         #viewer {
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 1rem;
+            padding: 1.5rem;
         }
         
         #search-bar {
@@ -76,9 +93,12 @@
             left: 0;
             right: 0;
             z-index: 100;
-            background: white;
-            padding: 1rem;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            padding: 0.875rem 1.25rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04);
+            border-bottom: 1px solid rgba(0,0,0,0.06);
         }
 
         .upload-container {
@@ -88,67 +108,353 @@
             justify-content: center;
             min-height: 100vh;
             padding: 2rem;
+            background: #f0f0f0;
+        }
+
+        /* Upload card */
+        .upload-card {
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 460px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 8px 32px rgba(0,0,0,0.06);
+            border: 1px solid rgba(0,0,0,0.06);
+        }
+
+        .upload-card h1 {
+            font-family: 'Inter', sans-serif;
+            font-size: 1.625rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            color: #1a1a2e;
+            margin: 0 0 0.375rem 0;
+            text-align: center;
+        }
+
+        .upload-card .subtitle {
+            font-size: 0.9rem;
+            color: #6b7280;
+            font-weight: 400;
+            margin-bottom: 1.75rem;
+            text-align: center;
+        }
+
+        /* File input area */
+        .file-drop-zone {
+            position: relative;
+            border: 2px dashed #d1d5db;
+            border-radius: 12px;
+            padding: 2rem 1.5rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background: #fafafa;
+            margin-bottom: 1rem;
+        }
+
+        .file-drop-zone:hover {
+            border-color: #1a1a2e;
+            background: #f5f5f7;
+        }
+
+        .file-drop-zone.dragover {
+            border-color: #1a1a2e;
+            background: #f0f0f5;
+        }
+
+        .file-drop-zone input[type="file"] {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .file-drop-zone .icon {
+            width: 40px;
+            height: 40px;
+            margin: 0 auto 0.75rem;
+            color: #9ca3af;
+        }
+
+        .file-drop-zone .label {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #374151;
+        }
+
+        .file-drop-zone .hint {
+            font-size: 0.8rem;
+            color: #9ca3af;
+            margin-top: 0.25rem;
+        }
+
+        .file-name-display {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: #1a1a2e;
+            background: #f0f0f5;
+            border-radius: 8px;
+            padding: 0.5rem 0.75rem;
+            margin-bottom: 1rem;
+            display: none;
+            align-items: center;
+            gap: 0.5rem;
+            word-break: break-all;
+        }
+
+        .file-name-display.visible {
+            display: flex;
+        }
+
+        .file-name-display .file-icon {
+            flex-shrink: 0;
+            width: 16px;
+            height: 16px;
+            color: #ef4444;
+        }
+
+        /* Primary button */
+        .btn-primary {
+            width: 100%;
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 10px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #ffffff;
+            background: #1a1a2e;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            letter-spacing: -0.01em;
+        }
+
+        .btn-primary:hover {
+            background: #2d2d4a;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(26, 26, 46, 0.2);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn-primary:disabled {
+            background: #d1d5db;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        /* Search bar buttons */
+        .btn-search {
+            padding: 0.5rem 1rem;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: #374151;
+            background: #ffffff;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+
+        .btn-search:hover {
+            background: #f5f5f7;
+            border-color: #9ca3af;
+        }
+
+        .btn-search:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .btn-back {
+            padding: 0.5rem 0.875rem;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: #374151;
+            background: #ffffff;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+
+        .btn-back:hover {
+            background: #f5f5f7;
+            border-color: #9ca3af;
+        }
+
+        /* Search input */
+        .search-input {
+            flex: 1;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 0.5rem 0.875rem;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.875rem;
+            color: #1a1a2e;
+            background: #ffffff;
+            outline: none;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .search-input::placeholder {
+            color: #9ca3af;
+        }
+
+        .search-input:focus {
+            border-color: #1a1a2e;
+            box-shadow: 0 0 0 3px rgba(26, 26, 46, 0.08);
+        }
+
+        /* Zoom select */
+        .zoom-select {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 0.5rem 0.625rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: #374151;
+            background: #ffffff;
+            outline: none;
+            cursor: pointer;
+            transition: border-color 0.15s ease;
+        }
+
+        .zoom-select:focus {
+            border-color: #1a1a2e;
+        }
+
+        .match-counter {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: #6b7280;
+            min-width: 90px;
+            text-align: center;
+        }
+
+        /* Spinner */
+        .spinner {
+            width: 28px;
+            height: 28px;
+            border: 2.5px solid #e5e7eb;
+            border-top-color: #1a1a2e;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .upload-status-text {
+            font-size: 0.85rem;
+            color: #6b7280;
+            margin-top: 0.75rem;
+            font-weight: 500;
+        }
+
+        /* Loading in viewer */
+        .viewer-loading {
+            text-align: center;
+            padding: 3rem 1rem;
+        }
+
+        .viewer-loading .spinner {
+            width: 36px;
+            height: 36px;
+        }
+
+        .viewer-loading p {
+            margin-top: 1rem;
+            font-size: 0.875rem;
+            color: #6b7280;
+            font-weight: 500;
+        }
+
+        /* Container for search bar flex */
+        .search-bar-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
         }
     </style>
 </head>
-<body class="bg-gray-100">
+<body>
     <!-- Upload Section -->
     <div id="uploadSection" class="upload-container">
-        <h1 class="text-3xl font-bold mb-6">Upload PDF</h1>
-        <form id="uploadForm" class="w-full max-w-md">
-            <input 
-                type="file" 
-                id="pdfFile" 
-                name="pdf" 
-                accept=".pdf" 
-                required
-                class="block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 focus:outline-none p-2 mb-4"
-            >
-            <button 
-                type="submit"
-                class="w-full bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-gray-300"
-            >
-                Upload PDF
-            </button>
-        </form>
-        <div id="uploadStatus" class="mt-4 text-gray-600 hidden">
-            <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
-            <p class="mt-2">Processing PDF...</p>
+        <div class="upload-card">
+            <h1>Upload PDF</h1>
+            <p class="subtitle">Select a document to view and search</p>
+            <form id="uploadForm">
+                <div class="file-drop-zone" id="dropZone">
+                    <input 
+                        type="file" 
+                        id="pdfFile" 
+                        name="pdf" 
+                        accept=".pdf" 
+                        required
+                    >
+                    <svg class="icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                    </svg>
+                    <p class="label">Click to browse or drag a file here</p>
+                    <p class="hint">PDF files only</p>
+                </div>
+                <div class="file-name-display" id="fileNameDisplay">
+                    <svg class="file-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                    </svg>
+                    <span id="fileNameText"></span>
+                </div>
+                <button 
+                    type="submit"
+                    class="btn-primary"
+                >
+                    Upload & View
+                </button>
+            </form>
+            <div id="uploadStatus" class="hidden" style="text-align:center; margin-top:1.25rem;">
+                <div class="spinner"></div>
+                <p class="upload-status-text">Processing PDF...</p>
+            </div>
         </div>
     </div>
 
     <!-- Viewer Section (hidden initially) -->
     <div id="viewerSection" class="hidden">
         <div id="search-bar">
-            <div class="container mx-auto flex gap-2 items-center">
-                <button 
-                    id="back-to-upload" 
-                    class="bg-gray-500 text-white px-3 py-2 rounded hover:bg-gray-600"
-                >
-                    ← New PDF
+            <div class="search-bar-inner">
+                <button id="back-to-upload" class="btn-back">
+                    <span style="margin-right:0.25rem;">&#8592;</span> New PDF
                 </button>
                 <input 
                     type="text" 
                     id="search-input" 
-                    placeholder="Search in PDF..." 
-                    class="flex-1 border rounded px-3 py-2"
+                    placeholder="Search in document..." 
+                    class="search-input"
                 />
-                <button 
-                    id="prev-match" 
-                    class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600 disabled:bg-gray-300"
-                    disabled
-                >
-                    ← Previous
+                <button id="prev-match" class="btn-search" disabled>
+                    &#8592; Prev
                 </button>
-                <button 
-                    id="next-match" 
-                    class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600 disabled:bg-gray-300"
-                    disabled
-                >
-                    Next →
+                <button id="next-match" class="btn-search" disabled>
+                    Next &#8594;
                 </button>
-                <span id="match-counter" class="text-sm text-gray-600 min-w-[100px]"></span>
-                <select id="zoom-select" class="border rounded px-2 py-1 text-sm">
+                <span id="match-counter" class="match-counter"></span>
+                <select id="zoom-select" class="zoom-select">
                     <option value="0.5">50%</option>
                     <option value="0.75">75%</option>
                     <option value="1">100%</option>
@@ -159,13 +465,41 @@
         </div>
 
         <div id="viewerContainer">
-            <div id="loading" class="text-center py-8">
-                <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900"></div>
-                <p class="mt-4 text-gray-600">Loading PDF...</p>
+            <div id="loading" class="viewer-loading">
+                <div class="spinner"></div>
+                <p>Loading PDF...</p>
             </div>
             <div id="viewer" class="pdfViewer"></div>
         </div>
     </div>
+
+    <script>
+        // File input UX enhancements
+        const dropZone = document.getElementById('dropZone');
+        const pdfFileInput = document.getElementById('pdfFile');
+        const fileNameDisplay = document.getElementById('fileNameDisplay');
+        const fileNameText = document.getElementById('fileNameText');
+
+        pdfFileInput.addEventListener('change', () => {
+            if (pdfFileInput.files.length > 0) {
+                fileNameText.textContent = pdfFileInput.files[0].name;
+                fileNameDisplay.classList.add('visible');
+            } else {
+                fileNameDisplay.classList.remove('visible');
+            }
+        });
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+        dropZone.addEventListener('drop', () => {
+            dropZone.classList.remove('dragover');
+        });
+    </script>
 
     <script type="module">
         import {
